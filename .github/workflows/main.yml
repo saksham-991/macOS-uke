@@ -1,0 +1,40 @@
+name: SSH Debug Tunnel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  start-tunnel:
+    runs-on: macos-14   # Apple silicon (M1), hosted by GitHub
+    timeout-minutes: 350
+
+    steps:
+      - name: Install bore
+        run: |
+          brew install bore-cli
+          bore --version
+
+      - name: Enable SSH and start tunnel
+        run: |
+          # Hosted runners do not have Remote Login enabled by default.
+          sudo systemsetup -setremotelogin on || true
+          sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist || true
+
+          # Set a password for the runner user so SSH login works.
+          RUNNER_USER=$(whoami)
+          echo "${RUNNER_USER}:changeme123" | sudo chpasswd
+
+          nohup bore local 22 --to bore.pub > /tmp/bore.log 2>&1 &
+          sleep 5
+          PORT=$(grep -oE 'bore.pub:[0-9]+' /tmp/bore.log | cut -d: -f2)
+          if [ -z "$PORT" ]; then
+            echo "bore failed:"; cat /tmp/bore.log; exit 1
+          fi
+          echo "### Tunnel ready" >> $GITHUB_STEP_SUMMARY
+          echo "\`ssh ${RUNNER_USER}@bore.pub -p ${PORT}\`" >> $GITHUB_STEP_SUMMARY
+          echo "password: changeme123" >> $GITHUB_STEP_SUMMARY
+
+      - name: Keep alive
+        run: |
+          while pgrep -f "bore local 22" > /dev/null; do sleep 30; done
+          exit 1
